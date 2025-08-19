@@ -1,0 +1,44 @@
+// App.java (root)
+package com.qode;
+
+import com.qode.collector.Runner;
+import com.qode.common.TweetRecord;
+import com.qode.processing.ParquetSink;
+import com.qode.analysis.SignalAggregator;
+
+import org.apache.avro.Schema;
+import org.apache.avro.SchemaBuilder;
+
+import java.nio.file.Path;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.*;
+
+public class App {
+  public static void main(String[] args) throws Exception {
+    List<String> tags = List.of("nifty50","sensex","intraday","banknifty");
+    int perTag = 600; // ~ 2400 total
+    BlockingQueue<TweetRecord> queue = new ArrayBlockingQueue<>(1000);
+
+    // Start collectors
+    Runner.runCollectors(tags, perTag, queue);
+
+    // Drain to Parquet
+    Schema schema = SchemaBuilder.record("Tweet").namespace("com.qode.schema").fields()
+        .requiredString("tweetId").requiredString("username").requiredString("timestamp")
+        .requiredString("content").requiredLong("likeCount").requiredLong("retweetCount")
+        .requiredLong("replyCount").name("mentions").type().array().items().stringType().noDefault()
+        .name("hashtags").type().array().items().stringType().noDefault()
+        .requiredString("sourceHashtag").endRecord();
+
+    Path out = Path.of("sample-output/tweets.parquet");
+    new java.io.File("sample-output").mkdirs();
+    try (ParquetSink sink = new ParquetSink(out, schema)) {
+      sink.drain(queue);
+    }
+
+    // You can also load the Parquet back and run analysis to produce PNGs…
+    // (omitted for brevity in this single-file snippet)
+    System.out.println("DONE at " + Instant.now());
+  }
+}
