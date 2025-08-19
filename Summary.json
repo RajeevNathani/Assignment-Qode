@@ -1,0 +1,9 @@
+{
+  "ingested": 2400,
+  "uniqueTweets": 2310,
+  "hashtags": ["nifty50","sensex","intraday","banknifty"],
+  "timeWindowUtc": ["2025-08-19T12:00:00Z","2025-08-20T12:00:00Z"],
+  "bullishFraction": 0.56,
+  "wilson95": [0.54, 0.58],
+  "topTerms": [["breakout", 121], ["rally", 97], ["support", 83]]
+}
