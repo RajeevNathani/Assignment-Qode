@@ -1,0 +1,75 @@
+// analysis/TextToSignal.java
+package com.qode.analysis;
+
+import org.apache.lucene.analysis.Analyzer;
+import org.apache.lucene.analysis.en.EnglishAnalyzer;
+import org.apache.lucene.analysis.TokenStream;
+import org.apache.lucene.analysis.tokenattributes.CharTermAttribute;
+
+import java.io.IOException;
+import java.io.StringReader;
+import java.util.*;
+import java.util.stream.Collectors;
+
+public final class TextToSignal {
+
+  private static final Set<String> BULLISH = Set.of(
+      "bullish","buy","long","breakout","uptrend","rally","accumulate","upper","circuit","bounce");
+  private static final Set<String> BEARISH = Set.of(
+      "bearish","sell","short","breakdown","downtrend","dump","distribute","lower","resistance","fall");
+
+  public static Map<String, Double> tfidf(List<String> docs) throws IOException {
+    Analyzer an = new EnglishAnalyzer();
+    List<List<String>> tokens = new ArrayList<>(docs.size());
+    Map<String, Integer> df = new HashMap<>();
+
+    for (String d : docs) {
+      List<String> tok = tokenize(an, d);
+      tokens.add(tok);
+      dfCount(df, new HashSet<>(tok));
+    }
+    int N = docs.size();
+    Map<String, Double> idf = new HashMap<>();
+    df.forEach((t, c) -> idf.put(t, Math.log(1 + (double)N / (1 + c))));
+
+    // Return a global “term weight” map you can use to project docs (or pick topK)
+    Map<String, Double> global = new HashMap<>();
+    for (List<String> tok : tokens) {
+      Map<String, Long> tf = tok.stream().collect(Collectors.groupingBy(x -> x, Collectors.counting()));
+      tf.forEach((t, c) -> global.merge(t, (1 + Math.log(c)) * idf.getOrDefault(t, 0.0), Double::sum));
+    }
+    return global;
+  }
+
+  public static double lexicalSentiment(String text) throws IOException {
+    Analyzer an = new EnglishAnalyzer();
+    List<String> tok = tokenize(an, text);
+    long pos = tok.stream().filter(BULLISH::contains).count();
+    long neg = tok.stream().filter(BEARISH::contains).count();
+    long tot = Math.max(1, pos + neg);
+    return (pos - neg) / (double) tot; // -1..+1
+  }
+
+  public static double[] wilsonInterval(double p, int n, double z) {
+    double z2 = z * z;
+    double denom = 1 + z2 / n;
+    double center = (p + z2/(2*n)) / denom;
+    double margin = (z * Math.sqrt((p*(1-p)+z2/(4*n))/n)) / denom;
+    return new double[]{center - margin, center + margin};
+  }
+
+  private static List<String> tokenize(Analyzer an, String text) throws IOException {
+    try (TokenStream ts = an.tokenStream("content", new StringReader(text))) {
+      List<String> out = new ArrayList<>();
+      CharTermAttribute attr = ts.addAttribute(CharTermAttribute.class);
+      ts.reset();
+      while (ts.incrementToken()) out.add(attr.toString());
+      ts.end();
+      return out;
+    }
+  }
+
+  private static void dfCount(Map<String,Integer> df, Set<String> uniques) {
+    for (String t : uniques) df.merge(t, 1, Integer::sum);
+  }
+}
