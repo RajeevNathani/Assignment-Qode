@@ -1,0 +1,52 @@
+// processing/ParquetSink.java
+package com.qode.processing;
+
+import com.qode.common.TweetRecord;
+import org.apache.avro.Schema;
+import org.apache.avro.generic.GenericData;
+import org.apache.parquet.avro.AvroParquetWriter;
+import org.apache.parquet.hadoop.metadata.CompressionCodecName;
+import org.apache.parquet.hadoop.ParquetWriter;
+
+import java.io.IOException;
+import java.nio.file.Path;
+import java.time.ZoneOffset;
+import java.util.concurrent.BlockingQueue;
+
+import static org.apache.parquet.hadoop.ParquetWriter.DEFAULT_BLOCK_SIZE;
+
+public final class ParquetSink implements AutoCloseable {
+  private final ParquetWriter<GenericData.Record> writer;
+  private final Schema schema;
+
+  public ParquetSink(Path path, Schema schema) throws IOException {
+    this.schema = schema;
+    this.writer = AvroParquetWriter.<GenericData.Record>builder(new org.apache.hadoop.fs.Path(path.toString()))
+        .withSchema(schema)
+        .withCompressionCodec(CompressionCodecName.ZSTD)
+        .withPageSize(256 * 1024)
+        .withRowGroupSize(DEFAULT_BLOCK_SIZE)
+        .build();
+  }
+
+  public void drain(BlockingQueue<TweetRecord> q) throws IOException, InterruptedException {
+    while (true) {
+      TweetRecord tr = q.poll(2, java.util.concurrent.TimeUnit.SECONDS);
+      if (tr == null) break; // stop condition after producers close in real app
+      GenericData.Record rec = new GenericData.Record(schema);
+      rec.put("tweetId", tr.tweetId());
+      rec.put("username", tr.username());
+      rec.put("timestamp", tr.timestamp().atOffset(ZoneOffset.UTC).toString());
+      rec.put("content", tr.content());
+      rec.put("likeCount", tr.likeCount());
+      rec.put("retweetCount", tr.retweetCount());
+      rec.put("replyCount", tr.replyCount());
+      rec.put("mentions", tr.mentions());
+      rec.put("hashtags", tr.hashtags());
+      rec.put("sourceHashtag", tr.sourceHashtag());
+      writer.write(rec);
+    }
+  }
+
+  @Override public void close() throws IOException { writer.close(); }
+}
