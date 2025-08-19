@@ -1,0 +1,8 @@
+tweetId: string
+username: string
+timestamp: string (ISO-8601 UTC)
+content: string
+likeCount, retweetCount, replyCount: long
+mentions: array<string>
+hashtags: array<string>
+sourceHashtag: string
