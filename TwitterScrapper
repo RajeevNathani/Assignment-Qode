@@ -1,0 +1,123 @@
+// collector/TwitterScraper.java
+package com.qode.collector;
+
+import com.microsoft.playwright.*;
+import com.qode.common.TweetRecord;
+import com.google.common.hash.BloomFilter;
+import com.google.common.hash.Funnels;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
+
+import java.nio.charset.StandardCharsets;
+import java.time.Instant;
+import java.util.*;
+import java.util.concurrent.BlockingQueue;
+
+public final class TwitterScraper {
+  private static final Logger log = LoggerFactory.getLogger(TwitterScraper.class);
+
+  private final BlockingQueue<TweetRecord> out;
+  private final BloomFilter<CharSequence> bloom;
+
+  public TwitterScraper(BlockingQueue<TweetRecord> out, int expected) {
+    this.out = out;
+    this.bloom = BloomFilter.create(Funnels.stringFunnel(StandardCharsets.UTF_8), expected * 2, 0.01);
+  }
+
+  public void scrapeHashtag(String hashtag, int targetCount) {
+    try (Playwright pw = Playwright.create()) {
+      Browser browser = pw.chromium().launch(new BrowserType.LaunchOptions().setHeadless(true));
+      BrowserContext ctx = browser.newContext(new Browser.NewContextOptions().setUserAgent(
+          "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 Chrome/120 Safari/537.36"));
+      Page page = ctx.newPage();
+
+      String url = "https://x.com/search?q=%23" + hashtag + "%20lang%3Aen&f=live";
+      page.navigate(url);
+
+      int seen = 0; long lastHeight = 0;
+      while (seen < targetCount) {
+        page.waitForTimeout(800); // gentle throttle; keep respectful
+        // Scroll
+        page.evaluate("window.scrollTo(0, document.body.scrollHeight)");
+        long height = page.evaluate("() => document.body.scrollHeight").asLong();
+        if (height == lastHeight) break; // no more
+        lastHeight = height;
+
+        // Parse current batch of tweet articles
+        for (Locator article : page.locator("article:has([data-testid='tweetText'])").all()) {
+          Optional<TweetRecord> rec = parseArticle(article, hashtag);
+          if (rec.isEmpty()) continue;
+
+          TweetRecord tr = rec.get();
+          String key = tr.tweetId() + "|" + tr.username();
+          if (bloom.mightContain(key)) continue; // fast reject
+          bloom.put(key);
+
+          out.put(tr);
+          seen++;
+          if (seen >= targetCount) break;
+        }
+      }
+      ctx.close();
+      browser.close();
+      log.info("Hashtag #{} scraped {} tweets", hashtag, seen);
+    } catch (Exception e) {
+      log.error("Scrape failed for #" + hashtag, e);
+    }
+  }
+
+  private Optional<TweetRecord> parseArticle(Locator article, String sourceTag) {
+    try {
+      String content = article.locator("[data-testid='tweetText']").innerText().trim();
+      String username = article.locator("a[role='link'][href^='/'']").first().getAttribute("href");
+      if (username != null && username.startsWith("/")) username = username.substring(1);
+
+      // Try to extract a stable tweetId from a permalink anchor if present
+      String tweetId = article.locator("a[href*='/status/']").first().getAttribute("href");
+      if (tweetId != null) tweetId = tweetId.replaceAll(".*/status/(\\d+).*", "$1");
+
+      // TS: prefer <time datetime="...">
+      String dt = article.locator("time").first().getAttribute("datetime");
+      Instant ts = dt != null ? Instant.parse(dt) : Instant.now();
+
+      long like = parseCount(article, "like");
+      long rt = parseCount(article, "retweet");
+      long reply = parseCount(article, "reply");
+
+      List<String> tags = extractHashes(content);
+      List<String> mentions = extractMentions(content);
+
+      if (tweetId == null || username == null) return Optional.empty();
+
+      return Optional.of(new TweetRecord(tweetId, username, ts, content, like, rt, reply, mentions, tags, sourceTag));
+    } catch (Throwable t) {
+      return Optional.empty();
+    }
+  }
+
+  private static long parseCount(Locator article, String kind) {
+    Locator icon = article.locator("[data-testid$='-" + kind + "']");
+    if (icon.count() == 0) return 0L;
+    String aria = icon.first().getAttribute("aria-label");
+    if (aria == null) return 0L;
+    return parseHumanNumber(aria.replaceAll("\\D+", ""));
+  }
+
+  static long parseHumanNumber(String s) {
+    try { return Long.parseLong(s); } catch (Exception e) { return 0L; }
+  }
+
+  static List<String> extractHashes(String text) {
+    return Arrays.stream(text.split("\\s+"))
+        .filter(w -> w.startsWith("#"))
+        .map(w -> w.replaceAll("[^#\\w]", "").toLowerCase())
+        .distinct().toList();
+  }
+
+  static List<String> extractMentions(String text) {
+    return Arrays.stream(text.split("\\s+"))
+        .filter(w -> w.startsWith("@"))
+        .map(w -> w.replaceAll("[^@\\w]", "").toLowerCase())
+        .distinct().toList();
+  }
+}
