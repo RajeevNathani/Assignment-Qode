@@ -1,0 +1,14 @@
+// viz/Plotter.java
+package com.qode.viz;
+
+import org.knowm.xchart.*;
+import java.nio.file.Path;
+import java.util.List;
+
+public final class Plotter {
+  public static void plotSignal(List<Double> xEpochSecs, List<Double> signal, Path outPng) throws Exception {
+    XYChart chart = new XYChartBuilder().width(900).height(500).title("Composite Signal").xAxisTitle("Time").yAxisTitle("Signal").build();
+    chart.addSeries("signal", xEpochSecs, signal);
+    BitmapEncoder.saveBitmap(chart, outPng.toString(), BitmapEncoder.BitmapFormat.PNG);
+  }
+}
