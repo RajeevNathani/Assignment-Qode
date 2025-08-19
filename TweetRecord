@@ -1,0 +1,18 @@
+// common/TweetRecord.java
+package com.qode.common;
+
+import java.time.Instant;
+import java.util.List;
+
+public record TweetRecord(
+    String tweetId,
+    String username,
+    Instant timestamp,
+    String content,
+    long likeCount,
+    long retweetCount,
+    long replyCount,
+    List<String> mentions,
+    List<String> hashtags,
+    String sourceHashtag  // which tag stream brought it in
+) {}
