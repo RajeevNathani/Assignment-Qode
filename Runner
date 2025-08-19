@@ -1,0 +1,22 @@
+// collector/Runner.java
+package com.qode.collector;
+
+import com.qode.common.TweetRecord;
+import java.util.List;
+import java.util.concurrent.*;
+
+public class Runner {
+  public static BlockingQueue<TweetRecord> runCollectors(List<String> hashtags, int perTag, BlockingQueue<TweetRecord> queue) {
+    try (ExecutorService exec = Executors.newVirtualThreadPerTaskExecutor()) {
+      for (String tag : hashtags) {
+        exec.submit(() -> new TwitterScraper(queue, perTag * 2).scrapeHashtag(tag, perTag));
+      }
+      exec.shutdown();
+      exec.awaitTermination(45, TimeUnit.MINUTES);
+      return queue;
+    } catch (InterruptedException e) {
+      Thread.currentThread().interrupt();
+      return queue;
+    }
+  }
+}
